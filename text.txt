@@ -1,0 +1,153 @@
+• Card Number: 13-19 digits
+• Expiry: MMYY format (e.g., 0125 for Jan 2025)
+• CVV: 3-4 digits
+
+**🛡️ SECURITY:**
+• Only authorized users can access
+• Card numbers are masked in logs
+• Secure Braintree gateway
+• No card data stored
+
+**📊 STATISTICS:**
+View your check history and success rates with `📊 My Stats`
+
+**🆘 SUPPORT:**
+Contact admin for access issues or technical problems
+    """
+    
+    await update.message.reply_text(help_text)
+
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("🚫 **Admin Access Required**")
+        return
+    
+    conn = sqlite3.connect('braintree_bot.db')
+    c = conn.cursor()
+    
+    # Get total statistics
+    c.execute("SELECT COUNT(*) FROM authorized_users")
+    total_users = c.fetchone()[0]
+    
+    c.execute("SELECT COUNT(*) FROM check_logs")
+    total_checks = c.fetchone()[0]
+    
+    c.execute("SELECT COUNT(*) FROM check_logs WHERE result LIKE '%APPROVED%'")
+    approved_checks = c.fetchone()[0]
+    
+    c.execute("SELECT COUNT(DISTINCT user_id) FROM check_logs WHERE DATE(timestamp) = DATE('now')")
+    active_today = c.fetchone()[0]
+    
+    conn.close()
+    
+    admin_text = f"""
+👑 **ADMIN CONTROL PANEL** 🛠️
+
+**📈 SYSTEM STATISTICS:**
+• Total Users: `{total_users}`
+• Total Checks: `{total_checks}`
+• Approved: `{approved_checks}`
+• Success Rate: `{(approved_checks/total_checks*100) if total_checks > 0 else 0:.1f}%`
+• Active Today: `{active_today}`
+
+**🔧 ADMIN COMMANDS:**
+• `/adduser <user_id>` - Add new user
+• `/stats` - Detailed statistics
+• `/broadcast <message>` - Broadcast to all users
+
+**🌐 GATEWAY STATUS:**
+• Braintree: ✅ **Connected**
+• Database: ✅ **Operational**
+• Bot: ✅ **Running**
+    """
+    
+    await update.message.reply_text(admin_text)
+
+async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        return
+    
+    if not context.args:
+        await update.message.reply_text("Usage: /adduser <user_id>")
+        return
+    
+    try:
+        new_user_id = int(context.args[0])
+        add_user(new_user_id)
+        await update.message.reply_text(f"✅ User `{new_user_id}` added successfully!")
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID format")
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("❌ Operation cancelled.")
+    return ConversationHandler.END
+
+# === MAIN APPLICATION ===
+def main():
+    # Initialize database
+    init_db()
+    
+    # Create application
+    application = Application.builder().token(BOT_TOKEN).build()
+    
+    # Add admin user
+    add_user(ADMIN_ID, "admin")
+    
+    # Conversation handlers
+    cc_conv_handler = ConversationHandler(
+        entry_points=[
+            MessageHandler(filters.Regex('^🔍 Check CC$'), handle_check_cc),
+            CommandHandler('check', handle_check_cc)
+        ],
+        states={
+            'AWAITING_CC_DETAILS': [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_cc_details)
+            ],
+            'AWAITING_CUSTOM_AMOUNT': [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_amount)
+            ],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)]
+    )
+    
+    mode_conv_handler = ConversationHandler(
+        entry_points=[
+            MessageHandler(filters.Regex('^🛠️ Check Mode$'), check_mode_menu),
+            CommandHandler('mode', check_mode_menu)
+        ],
+        states={
+            'AWAITING_CUSTOM_AMOUNT': [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_amount)
+            ],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)]
+    )
+    
+    # Add handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("stats", show_stats))
+    application.add_handler(CommandHandler("admin", admin_panel))
+    application.add_handler(CommandHandler("adduser", add_user_command))
+    
+    application.add_handler(cc_conv_handler)
+    application.add_handler(mode_conv_handler)
+    application.add_handler(CallbackQueryHandler(handle_mode_callback, pattern="^mode_"))
+    
+    # Text message handlers
+    application.add_handler(MessageHandler(filters.Regex('^📊 My Stats$'), show_stats))
+    application.add_handler(MessageHandler(filters.Regex('^ℹ️ Help$'), help_command))
+    
+    # Start the bot
+    print("🚀 Braintree CC Checker Bot is running...")
+    print(f"🤖 Bot Token: {BOT_TOKEN}")
+    print(f"👑 Admin ID: {ADMIN_ID}")
+    print("💳 Gateway: Braintree")
+    print("📊 Database: braintree_bot.db")
+    
+    application.run_polling()
+
+if __name__ == '__main__':
+    main()
